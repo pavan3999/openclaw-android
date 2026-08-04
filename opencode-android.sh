@@ -325,18 +325,30 @@ install_opencode() {
 
     log_info "Extracting..."
     mkdir -p "$OC_DIR"
-    if ! tar -xzf "$tmp_tar" -C "$OC_DIR" 2>/dev/null; then
-      # Try alternate extraction
+    tar -xzf "$tmp_tar" -C "$OC_DIR" 2>&1 || {
+      log_warn "Extraction to $OC_DIR failed, trying current dir..."
       tar -xzf "$tmp_tar" 2>/dev/null || true
-      mv opencode-linux-arm64 "$OC_BIN" 2>/dev/null || true
-    fi
+    }
     rm -rf "$tmp_dir"
 
-    if [ ! -x "$OC_BIN" ]; then
+    # Find the binary - it might be in a subdirectory
+    local found_bin
+    found_bin=$(find "$OC_DIR" -name "opencode*" -type f -executable 2>/dev/null | head -1 || true)
+    if [ -z "$found_bin" ]; then
+      found_bin=$(find "$HOME" -maxdepth 2 -name "opencode*" -type f -executable 2>/dev/null | head -1 || true)
+    fi
+
+    if [ -z "$found_bin" ]; then
       log_warn "OpenCode binary not found after extraction"
+      ls -la "$OC_DIR" 2>/dev/null || true
       return 1
     fi
-    chmod +x "$OC_BIN"
+
+    # If found in different location, move to OC_DIR
+    if [ "$found_bin" != "$OC_BIN" ]; then
+      mv "$found_bin" "$OC_BIN"
+      chmod +x "$OC_BIN"
+    fi
     log_ok "OpenCode extracted to $OC_BIN"
   fi
   echo ""
