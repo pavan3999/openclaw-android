@@ -325,30 +325,23 @@ install_opencode() {
 
     log_info "Extracting..."
     mkdir -p "$OC_DIR"
-    tar -xzf "$tmp_tar" -C "$OC_DIR" 2>&1 || {
-      log_warn "Extraction to $OC_DIR failed, trying current dir..."
-      tar -xzf "$tmp_tar" 2>/dev/null || true
-    }
+    # Extract directly to OC_DIR (tarball contains "opencode" at root level)
+    if ! tar -xzf "$tmp_tar" -C "$OC_DIR"; then
+      # Fallback: extract to tmp then move
+      tar -xzf "$tmp_tar" -C /tmp 2>/dev/null || true
+      if [ -f "/tmp/opencode" ]; then
+        mv /tmp/opencode "$OC_BIN"
+        chmod +x "$OC_BIN"
+      fi
+    fi
     rm -rf "$tmp_dir"
 
-    # Find the binary - it might be in a subdirectory
-    local found_bin
-    found_bin=$(find "$OC_DIR" -name "opencode*" -type f -executable 2>/dev/null | head -1 || true)
-    if [ -z "$found_bin" ]; then
-      found_bin=$(find "$HOME" -maxdepth 2 -name "opencode*" -type f -executable 2>/dev/null | head -1 || true)
-    fi
-
-    if [ -z "$found_bin" ]; then
+    if [ ! -x "$OC_BIN" ]; then
       log_warn "OpenCode binary not found after extraction"
       ls -la "$OC_DIR" 2>/dev/null || true
       return 1
     fi
-
-    # If found in different location, move to OC_DIR
-    if [ "$found_bin" != "$OC_BIN" ]; then
-      mv "$found_bin" "$OC_BIN"
-      chmod +x "$OC_BIN"
-    fi
+    chmod +x "$OC_BIN"
     log_ok "OpenCode extracted to $OC_BIN"
   fi
   echo ""
