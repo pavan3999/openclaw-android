@@ -277,7 +277,7 @@ install_proot() {
 
 
 
-# ── Install OpenCode ──
+# ── Install OpenCode (direct binary download) ──
 install_opencode() {
   echo ""
   echo "=== [3/5] Installing OpenCode ==="
@@ -289,66 +289,69 @@ install_opencode() {
     return 0
   fi
 
-  # Ensure npm is available
-  if ! command -v npm &>/dev/null; then
-    log_info "Installing Node.js/npm..."
-    pkg install -y nodejs
-  fi
+  # Check for existing installation
+  local OC_DIR="$OPENCLAW_DIR/opencode"
+  local OC_BIN="$OC_DIR/opencode-linux-arm64"
+  if [ -x "$OC_BIN" ]; then
+    log_skip "OpenCode binary already exists at $OC_BIN"
+  else
+    log_info "Fetching latest release info..."
+    local latest_url="https://api.github.com/repos/opencode-ai/opencode/releases/latest"
+    local tag resp
+    tag=$(curl -sfL "$latest_url" 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/' || true)
+    if [ -z "$tag" ]; then
+      log_warn "Failed to fetch latest release info"
+      return 1
+    fi
+    log_info "Latest version: v$tag"
+    echo ""
 
-  if ! command -v npm &>/dev/null; then
-    log_warn "npm not found — cannot install OpenCode"
-    return 1
-  fi
-
-  log_info "Installing OpenCode via npm (this may take a few minutes)..."
-  npm install -g opencode-ai 2>&1 || {
-    log_warn "npm install failed — trying with --ignore-scripts..."
-    npm install -g opencode-ai --ignore-scripts 2>&1 || {
-      log_warn "OpenCode installation failed"
+    local download_url="https://github.com/opencode-ai/opencode/releases/download/v${tag}/opencode-linux-arm64.tar.gz"
+    local tmp_dir tmp_tar
+    tmp_dir=$(mktemp -d "$PREFIX/tmp/opencode-install.XXXXXX") || {
+      log_warn "Failed to create temp directory"
       return 1
     }
-  }
-  echo ""
+    tmp_tar="$tmp_dir/opencode.tar.gz"
 
-  # Find the OpenCode binary in npm global modules
-  local opencode_bin=""
-  for path in \
-    "$PREFIX/lib/node_modules/opencode-ai/bin/opencode.js" \
-    "$PREFIX/lib/node_modules/opencode-ai/dist/cli.js" \
-    "$HOME/node_modules/opencode-ai/bin/opencode.js" \
-    "$HOME/node_modules/opencode-ai/dist/cli.js"; do
-    if [ -f "$path" ]; then
-      opencode_bin="$path"
-      break
+    log_info "Downloading OpenCode v${tag} (~50MB)..."
+    if ! curl -fL --max-time 300 "$download_url" -o "$tmp_tar"; then
+      rm -rf "$tmp_dir"
+      log_warn "Failed to download OpenCode from GitHub"
+      return 1
     fi
-  done
+    log_ok "Downloaded"
+    echo ""
 
-  # If not found, search
-  if [ -z "$opencode_bin" ]; then
-    opencode_bin=$(find "$PREFIX/lib/node_modules" -name "opencode.js" -path "*/bin/*" 2>/dev/null | head -1 || true)
-  fi
-  if [ -z "$opencode_bin" ]; then
-    opencode_bin=$(find "$HOME" -name "opencode.js" -path "*/bin/*" 2>/dev/null | head -1 || true)
-  fi
+    log_info "Extracting..."
+    mkdir -p "$OC_DIR"
+    if ! tar -xzf "$tmp_tar" -C "$OC_DIR" 2>/dev/null; then
+      # Try alternate extraction
+      tar -xzf "$tmp_tar" 2>/dev/null || true
+      mv opencode-linux-arm64 "$OC_BIN" 2>/dev/null || true
+    fi
+    rm -rf "$tmp_dir"
 
-  if [ -z "$opencode_bin" ]; then
-    log_warn "OpenCode binary not found after installation"
-    return 1
+    if [ ! -x "$OC_BIN" ]; then
+      log_warn "OpenCode binary not found after extraction"
+      return 1
+    fi
+    chmod +x "$OC_BIN"
+    log_ok "OpenCode extracted to $OC_BIN"
   fi
-  log_ok "OpenCode binary found: $opencode_bin"
   echo ""
 
-  # Create minimal proot rootfs
-  log_info "Setting up proot minimal rootfs..."
+  # Create proot rootfs
+  log_info "Setting up proot rootfs..."
   mkdir -p "$PROOT_ROOT/data/data/com.termux/files"
   log_ok "proot rootfs created"
   echo ""
 
-  # Create proot wrapper script
-  local opencode_wrapper="$PREFIX/bin/opencode"
+  # Create wrapper script
+  local wrapper="$PREFIX/bin/opencode"
   log_info "Creating OpenCode wrapper script..."
 
-  cat > "$opencode_wrapper" << WRAPPER
+  cat > "$wrapper" << WRAPPER
 #!/data/data/com.termux/files/usr/bin/bash
 # OpenCode wrapper — proot for syscall interception
 unset LD_PRELOAD
@@ -358,35 +361,35 @@ exec proot \
   -b /system:/system \
   -b /apex:/apex \
   -w "\$(pwd)" \
-  "$PREFIX/bin/node" "$opencode_bin" "\$@"
+  "$OC_BIN" "\$@"
 WRAPPER
-  chmod +x "$opencode_wrapper"
+  chmod +x "$wrapper"
   log_ok "OpenCode wrapper script created"
   echo ""
 
-  # Create OpenCode config
-  local opencode_config_dir="$HOME/.config/opencode"
-  local opencode_config="$opencode_config_dir/opencode.json"
-  mkdir -p "$opencode_config_dir"
-  if [ ! -f "$opencode_config" ]; then
-    cat > "$opencode_config" << 'CONFIG'
+  # Create config
+  local config_dir="$HOME/.config/opencode"
+  mkdir -p "$config_dir"
+  if [ ! -f "$config_dir/opencode.json" ]; then
+    cat > "$config_dir/opencode.json" << 'CONFIG'
 {
   "$schema": "https://opencode.ai/config.json"
 }
 CONFIG
-    log_ok "OpenCode config created at ~/.config/opencode/opencode.json"
+    log_ok "Config created at ~/.config/opencode/opencode.json"
   else
-    log_ok "OpenCode config already exists"
+    log_ok "Config already exists"
   fi
   echo ""
 
   # Verify
   log_info "Verifying OpenCode..."
-  OC_VER=$("$opencode_wrapper" --version 2>/dev/null) || true
-  if [ -n "$OC_VER" ]; then
-    log_ok "OpenCode v$OC_VER verified"
+  local ver
+  ver=$("$wrapper" --version 2>/dev/null) || true
+  if [ -n "$ver" ]; then
+    log_ok "OpenCode v$ver verified"
   else
-    log_warn "OpenCode --version check failed (may still work in interactive mode)"
+    log_warn "Verification failed — may still work in interactive mode"
   fi
 
   echo ""
