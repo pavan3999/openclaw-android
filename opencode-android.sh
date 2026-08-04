@@ -71,25 +71,54 @@ ask_optional_tools() {
   echo "=== Optional Tools ==="
   echo ""
   echo "Select which tools to install:"
+  echo "  [1] tmux (terminal multiplexer, untuk background session)......... [Y/n]"
+  echo "  [2] ttyd (web terminal, akses dari browser).................. [n]"
+  echo "  [3] dufs (file server HTTP/WebDAV).......................... [n]"
+  echo "  [4] android-tools (ADB, untuk disable Phantom Process Killer) [n]"
+  echo "  [5] code-server (VS Code di browser)......................... [n]"
+  echo "  [6] chromium (browser automation)............................ [n]"
+  echo "  [7] playwright (browser automation library).................. [n]"
   echo ""
 
-  local reply
-
-  echo -n "  [1] tmux (terminal multiplexer, untuk background session)......... "
-  read -r reply; TOOLS_TMUX="${reply:-y}"
-  echo -n "  [2] ttyd (web terminal, akses dari browser).................. "
-  read -r reply; TOOLS_TTYD="${reply:-n}"
-  echo -n "  [3] dufs (file server HTTP/WebDAV).......................... "
-  read -r reply; TOOLS_DUFS="${reply:-n}"
-  echo -n "  [4] android-tools (ADB, untuk disable Phantom Process Killer). "
-  read -r reply; TOOLS_ANDROID_TOOLS="${reply:-n}"
-  echo -n "  [5] code-server (VS Code di browser)......................... "
-  read -r reply; TOOLS_CODE_SERVER="${reply:-n}"
-  echo -n "  [6] chromium (browser automation)............................ "
-  read -r reply; TOOLS_CHROMIUM="${reply:-n}"
-  echo -n "  [7] playwright (browser automation library).................. "
-  read -r reply; TOOLS_PLAYWRIGHT="${reply:-n}"
-
+  # Check if stdin is a TTY (interactive mode)
+  if [ -t 0 ]; then
+    # Interactive mode - prompt user
+    local reply
+    echo -n "  Select tools (default: tmux only, Enter for defaults): "
+    read -r reply
+    if [ -z "$reply" ]; then
+      # Default: only tmux
+      TOOLS_TMUX="y"
+      TOOLS_TTYD="n"
+      TOOLS_DUFS="n"
+      TOOLS_ANDROID_TOOLS="n"
+      TOOLS_CODE_SERVER="n"
+      TOOLS_CHROMIUM="n"
+      TOOLS_PLAYWRIGHT="n"
+    else
+      # Parse input (e.g., "1,3,5" or "1 3 5")
+      echo "$reply" | grep -q "1" && TOOLS_TMUX="y" || TOOLS_TMUX="n"
+      echo "$reply" | grep -q "2" && TOOLS_TTYD="y" || TOOLS_TTYD="n"
+      echo "$reply" | grep -q "3" && TOOLS_DUFS="y" || TOOLS_DUFS="n"
+      echo "$reply" | grep -q "4" && TOOLS_ANDROID_TOOLS="y" || TOOLS_ANDROID_TOOLS="n"
+      echo "$reply" | grep -q "5" && TOOLS_CODE_SERVER="y" || TOOLS_CODE_SERVER="n"
+      echo "$reply" | grep -q "6" && TOOLS_CHROMIUM="y" || TOOLS_CHROMIUM="n"
+      echo "$reply" | grep -q "7" && TOOLS_PLAYWRIGHT="y" || TOOLS_PLAYWRIGHT="n"
+    fi
+  else
+    # Non-interactive (curl|bash) - use defaults
+    echo "  [AUTO] Running in non-interactive mode — installing defaults (tmux only)"
+    echo "         To select tools manually, run:"
+    echo "         bash ~/opencode-android.sh"
+    echo ""
+    TOOLS_TMUX="y"
+    TOOLS_TTYD="n"
+    TOOLS_DUFS="n"
+    TOOLS_ANDROID_TOOLS="n"
+    TOOLS_CODE_SERVER="n"
+    TOOLS_CHROMIUM="n"
+    TOOLS_PLAYWRIGHT="n"
+  fi
   echo ""
 }
 
