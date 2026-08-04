@@ -150,7 +150,7 @@ resolve_repo_base() {
 
 # ── Install L1: Core infrastructure ──
 install_infra() {
-  echo "=== [1/6] Installing Infrastructure ==="
+  echo "=== [1/5] Installing Infrastructure ==="
   echo ""
 
   log_info "Updating package repositories..."
@@ -165,7 +165,7 @@ install_infra() {
 
 # ── Install L2: glibc environment ──
 install_glibc() {
-  echo "=== [2/6] Installing glibc Runtime ==="
+  echo "=== [2/5] Installing glibc Runtime ==="
   echo ""
 
   # Check if already installed
@@ -275,56 +275,12 @@ install_proot() {
   log_ok "proot available"
 }
 
-# ── Install Bun runtime ──
-install_bun() {
-  echo ""
-  echo "=== [3/6] Installing Bun Runtime ==="
-  echo ""
 
-  BUN_BIN="$HOME/.bun/bin/bun"
-  if [ -x "$BUN_BIN" ]; then
-    log_skip "Bun already installed at $BUN_BIN"
-    return 0
-  fi
-
-  log_info "Installing Bun (this may take a few minutes)..."
-  if ! curl -fsSL https://bun.sh/install | bash 2>/dev/null; then
-    fail_exit "Failed to install Bun"
-  fi
-
-  if [ ! -x "$BUN_BIN" ]; then
-    fail_exit "Bun installation failed — binary not found"
-  fi
-  log_ok "Bun installed"
-  echo ""
-}
-
-# ── Create Bun wrapper (ld.so + Bun concatenation) ──
-create_bun_wrapper() {
-  local bun_wrapper="$OPENCLAW_DIR/bin/bun-grun"
-  mkdir -p "$OPENCLAW_DIR/bin"
-
-  # Bun is a glibc binary — prepend ld.so so it works on Bionic Android
-  create_ldso_concat "$BUN_BIN" "$bun_wrapper" "Bun"
-}
-
-# ── Verify Bun works ──
-verify_bun() {
-  local bun_wrapper="$OPENCLAW_DIR/bin/bun-grun"
-  echo ""
-  log_info "Verifying Bun..."
-
-  BUN_VER=$("$bun_wrapper" --version 2>/dev/null) || {
-    log_warn "Bun verification failed — may still work in proot context"
-    return 1
-  }
-  log_ok "Bun $BUN_VER verified"
-}
 
 # ── Install OpenCode ──
 install_opencode() {
   echo ""
-  echo "=== [4/6] Installing OpenCode ==="
+  echo "=== [3/5] Installing OpenCode ==="
   echo ""
 
   # Check if already installed
@@ -333,31 +289,47 @@ install_opencode() {
     return 0
   fi
 
-  local bun_wrapper="$OPENCLAW_DIR/bin/bun-grun"
+  # Ensure npm is available
+  if ! command -v npm &>/dev/null; then
+    log_info "Installing Node.js/npm..."
+    pkg install -y nodejs
+  fi
 
-  log_info "Installing OpenCode via Bun (this may take a few minutes)..."
-  # Bun may exit non-zero due to optional platform packages (windows, darwin) failing
-  # but the linux-arm64 binary is still installed successfully
-  "$bun_wrapper" install -g opencode-ai 2>&1 || true
-  log_ok "opencode-ai package install attempted"
+  if ! command -v npm &>/dev/null; then
+    log_warn "npm not found — cannot install OpenCode"
+    return 1
+  fi
+
+  log_info "Installing OpenCode via npm (this may take a few minutes)..."
+  npm install -g opencode-ai 2>&1 || {
+    log_warn "npm install failed — trying with --ignore-scripts..."
+    npm install -g opencode-ai --ignore-scripts 2>&1 || {
+      log_warn "OpenCode installation failed"
+      return 1
+    }
+  }
   echo ""
 
-  # Remove Bun's global shim — it tries to spawnSync native binary directly
-  # which fails on Termux. Our proot wrapper will be used instead.
-  rm -f "$HOME/.bun/bin/opencode"
-
-  # Find the OpenCode binary
+  # Find the OpenCode binary in npm global modules
   local opencode_bin=""
-  for pattern in \
-    "$HOME/.bun/install/cache/opencode-linux-arm64@*/bin/opencode" \
-    "$HOME/.bun/install/global/node_modules/opencode-linux-arm64/bin/opencode"; do
-    # shellcheck disable=SC2012,SC2086
-    FOUND=$(ls $pattern 2>/dev/null | sort -V | tail -1 || true)
-    if [ -n "$FOUND" ] && [ -f "$FOUND" ]; then
-      opencode_bin="$FOUND"
+  for path in \
+    "$PREFIX/lib/node_modules/opencode-ai/bin/opencode.js" \
+    "$PREFIX/lib/node_modules/opencode-ai/dist/cli.js" \
+    "$HOME/node_modules/opencode-ai/bin/opencode.js" \
+    "$HOME/node_modules/opencode-ai/dist/cli.js"; do
+    if [ -f "$path" ]; then
+      opencode_bin="$path"
       break
     fi
   done
+
+  # If not found, search
+  if [ -z "$opencode_bin" ]; then
+    opencode_bin=$(find "$PREFIX/lib/node_modules" -name "opencode.js" -path "*/bin/*" 2>/dev/null | head -1 || true)
+  fi
+  if [ -z "$opencode_bin" ]; then
+    opencode_bin=$(find "$HOME" -name "opencode.js" -path "*/bin/*" 2>/dev/null | head -1 || true)
+  fi
 
   if [ -z "$opencode_bin" ]; then
     log_warn "OpenCode binary not found after installation"
@@ -372,21 +344,13 @@ install_opencode() {
   log_ok "proot rootfs created"
   echo ""
 
-  # Create ld.so + OpenCode concatenation
-  local ldso_opencode="$OPENCLAW_DIR/bin/ld.so.opencode"
-  create_ldso_concat "$opencode_bin" "$ldso_opencode" "OpenCode"
-  echo ""
-
   # Create proot wrapper script
   local opencode_wrapper="$PREFIX/bin/opencode"
   log_info "Creating OpenCode wrapper script..."
 
   cat > "$opencode_wrapper" << WRAPPER
 #!/data/data/com.termux/files/usr/bin/bash
-# OpenCode wrapper — proot + ld.so concatenation
-# proot: intercepts raw syscalls (OpenCode uses inline asm)
-# ld.so concat: fixes /proc/self/exe offset for embedded JS
-# unset LD_PRELOAD: prevents Bionic libtermux-exec.so version mismatch
+# OpenCode wrapper — proot for syscall interception
 unset LD_PRELOAD
 exec proot \
   -R "$PROOT_ROOT" \
@@ -394,7 +358,7 @@ exec proot \
   -b /system:/system \
   -b /apex:/apex \
   -w "\$(pwd)" \
-  "$ldso_opencode" "$opencode_bin" "\$@"
+  "$PREFIX/bin/node" "$opencode_bin" "\$@"
 WRAPPER
   chmod +x "$opencode_wrapper"
   log_ok "OpenCode wrapper script created"
@@ -432,7 +396,7 @@ CONFIG
 
 # ── Setup environment variables ──
 setup_environment() {
-  echo "=== [5/6] Setting Up Environment ==="
+  echo "=== [4/5] Setting Up Environment ==="
   echo ""
 
   local bashrc="$HOME/.bashrc"
@@ -472,7 +436,7 @@ $marker_end"
 # ── Install optional tools ──
 install_optional_tools() {
   echo ""
-  echo "=== [6/6] Installing Optional Tools ==="
+  echo "=== [5/5] Installing Optional Tools ==="
   echo ""
 
   # Helper: check if already installed
@@ -828,9 +792,6 @@ main() {
   install_infra
   install_glibc
   install_proot
-  install_bun
-  create_bun_wrapper
-  verify_bun
   install_opencode
   setup_environment
   install_optional_tools
