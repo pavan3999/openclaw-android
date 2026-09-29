@@ -12,6 +12,8 @@ on:
       - 'android/**'
       - '.github/workflows/android-build.yml'
 
+  workflow_dispatch:
+
 jobs:
   build-www:
     name: Build WebView UI
