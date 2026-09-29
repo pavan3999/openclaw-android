@@ -22,7 +22,7 @@ set -eo pipefail
 OCA_DIR="$HOME/.openclaw-android"
 NODE_DIR="$OCA_DIR/node"
 BIN_DIR="$OCA_DIR/bin"
-NODE_VERSION="22.22.0"
+NODE_VERSION="24.16.0"
 GLIBC_LDSO="$PREFIX/glibc/lib/ld-linux-aarch64.so.1"
 MARKER="$OCA_DIR/.post-setup-done"
 
@@ -230,14 +230,62 @@ if [ -x "$GLIBC_LDSO" ]; then
 else
     mkdir -p "$PREFIX/glibc"
 
-    # Download glibc package directly from pacman repo (no pacman needed)
-    # The gpkg.db tells us: glibc-2.42-0-aarch64.pkg.tar.xz (~9.7MB)
-    echo "  Downloading glibc (~10MB)..."
-    install_pacman_pkg "glibc-2.42-0-aarch64.pkg.tar.xz" "$PREFIX/glibc"
+    # Resolve current glibc package filenames from the repository.
+echo " Fetching glibc package index..."
 
-    # gcc-libs-glibc provides libstdc++.so.6 needed by Node.js (~24MB)
-    echo "  Downloading gcc-libs (~24MB)..."
-    install_pacman_pkg "gcc-libs-glibc-14.2.1-1-aarch64.pkg.tar.xz" "$PREFIX/glibc"
+GLIBC_PACKAGES_FILE="$TMPDIR/gpkg.db"
+
+curl -fsSL --max-time 120 \
+    "${PACMAN_PKG_REPO}/gpkg.db" \
+    -o "$GLIBC_PACKAGES_FILE"
+
+get_pacman_filename() {
+    local pkg="$1"
+    local desc_file
+
+    # gpkg.db is a tar archive containing one */desc file per package.
+    # Find the exact package record first, then read its %FILENAME% field.
+    desc_file="$(tar -tf "$GLIBC_PACKAGES_FILE" 2>/dev/null | \
+        awk -v pkg="$pkg" '$0 ~ "^" pkg "-[^/]+/desc$" { print; exit }')"
+
+    if [ -z "$desc_file" ]; then
+        return 1
+    fi
+
+    tar -xOf "$GLIBC_PACKAGES_FILE" "$desc_file" 2>/dev/null | \
+        awk '
+            $0 == "%FILENAME%" {
+                if (getline > 0) {
+                    print
+                    exit
+                }
+            }
+        '
+}
+GLIBC_PKG="$(get_pacman_filename glibc)"
+
+if [ -z "$GLIBC_PKG" ]; then
+    echo -e " ${RED}✗${NC} Could not resolve current glibc package"
+    exit 1
+fi
+
+echo " Downloading glibc: $GLIBC_PKG"
+install_pacman_pkg "$GLIBC_PKG" "$PREFIX/glibc"
+
+
+    # gcc-libs-glibc provides libstdc++.so.6 needed by Node.js.
+
+GCC_LIBS_PKG="$(get_pacman_filename gcc-libs-glibc)"
+
+if [ -z "$GCC_LIBS_PKG" ]; then
+    echo -e " ${RED}✗${NC} Could not resolve current gcc-libs-glibc package"
+    exit 1
+fi
+
+echo " Downloading gcc-libs: $GCC_LIBS_PKG"
+install_pacman_pkg "$GCC_LIBS_PKG" "$PREFIX/glibc"
+
+rm -f "$GLIBC_PACKAGES_FILE"
 
     # Verify linker
     if [ ! -f "$GLIBC_LDSO" ]; then
