@@ -65,7 +65,12 @@ jobs:
           key: gradle-${{ hashFiles('android/**/*.gradle*', 'android/gradle/libs.versions.toml') }}
           restore-keys: gradle-
 
+      - name: Install web dependencies
+        working-directory: android/www
+        run: npm ci
+
       - name: Build debug APK
+        working-directory: android
         run: ./gradlew assembleDebug
 
       - uses: actions/upload-artifact@v4
