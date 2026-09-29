@@ -12,6 +12,8 @@ echo ""
 
 # Ensure required environment variables are set (for standalone use)
 export TMPDIR="${TMPDIR:-$PREFIX/tmp}"
+export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+mkdir -p "$OPENCLAW_STATE_DIR/tmp"
 
 # Find OpenClaw installation directory
 NPM_ROOT=$(npm root -g 2>/dev/null)
@@ -23,6 +25,31 @@ if [ ! -d "$OPENCLAW_DIR" ]; then
 fi
 
 echo "OpenClaw found at: $OPENCLAW_DIR"
+
+# Android: OpenClaw state lifecycle locks must not use /tmp.
+echo "Patching OpenClaw state lifecycle runtime directory..."
+
+STATE_PATCHED=0
+
+while IFS= read -r -d '' f; do
+    if grep -qF \
+        'process.platform === "win32" ? path.join(os.homedir(), "AppData", "Local", "OpenClaw", "locks") : "/tmp"' \
+        "$f" 2>/dev/null; then
+
+        sed -i \
+            's#process\.platform === "win32" ? path\.join(os\.homedir(), "AppData", "Local", "OpenClaw", "locks") : "/tmp"#process.platform === "win32" ? path.join(os.homedir(), "AppData", "Local", "OpenClaw", "locks") : path.join(process.env.OPENCLAW_STATE_DIR || path.join(os.homedir(), ".openclaw"), "tmp")#g' \
+            "$f"
+
+        echo -e "  ${GREEN}[PATCHED]${NC} $f (state lifecycle tmp)"
+        STATE_PATCHED=$((STATE_PATCHED + 1))
+    fi
+done < <(
+    find "$OPENCLAW_DIR" -type f \
+        \( -name '*.js' -o -name '*.mjs' -o -name '*.cjs' \) \
+        -print0 2>/dev/null
+)
+
+echo -e "  ${GREEN}[OK]${NC} State lifecycle files patched: $STATE_PATCHED"
 
 PATCHED=0
 
